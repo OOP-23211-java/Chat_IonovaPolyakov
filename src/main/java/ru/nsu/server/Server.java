@@ -5,26 +5,40 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
+import ru.nsu.server.database.DataBase;
 import ru.nsu.server.worker.MessageWorkerPool;
 import ru.nsu.server.database.DataBaseManager;
 
 import java.net.InetSocketAddress;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.*;
 
-import static java.lang.Thread.sleep;
 
 public class Server extends WebSocketServer {
 
     private final Map<WebSocket, String> userSessions = new ConcurrentHashMap<>();
     private final MessageWorkerPool workerPool = new MessageWorkerPool(4);
-    private final DataBaseManager storage = new DataBaseManager();
+    private final DataBase db;
+    private final DataBaseManager storage;
     private final ObjectMapper mapper = new ObjectMapper();
     private final BlockingQueue<Boolean> exitQueue = new LinkedBlockingQueue<>();  // Очередь для сигналов
 
     public Server(int port) {
         super(new InetSocketAddress(port));
+        db = new DataBase("chat.db");
+        try {
+            db.connect();
+        } catch (SQLException e) {
+            System.err.println("Ошибка при сздании базы данных " + e.getMessage());
+            try{
+                this.stop();
+            } catch (InterruptedException ex) {
+                throw new RuntimeException(ex);
+            }
+        }
+    storage = new DataBaseManager(db);
     }
 
     @Override
@@ -88,6 +102,7 @@ public class Server extends WebSocketServer {
     public void stopServer() {
         System.out.println("Остановка сервера...");
         workerPool.shutdown();
+        db.close();
         for (WebSocket conn : userSessions.keySet()) {
             try {
                 if (conn != null && conn.isOpen()) {
@@ -112,7 +127,6 @@ public class Server extends WebSocketServer {
             while (true) {
                 if (scanner.hasNextLine()) { // Проверяем, есть ли новая строка для считывания
                     String input = scanner.nextLine();
-                    sleep(10);
                     if ("exit".equalsIgnoreCase(input)) {
                         stopServer();
                         break;

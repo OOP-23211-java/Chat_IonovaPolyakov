@@ -69,7 +69,7 @@ public class MessageHandler {
             }
         }
     }
-   // Новый метод для обработки присоединения пользователя
+
     private static void handleJoin(WebSocket conn, String username, String room,
                                    Map<WebSocket, String> usernames, DataBaseManager storage) {
         String jsonString;
@@ -81,8 +81,6 @@ public class MessageHandler {
 
             jsonString = buildJsonString("USER_JOINED", "", username, room);
             sendHistory(room, username, conn, storage);
-            //storage.addMessage(room, jsonString);
-            //System.out.println("Сообщение добавлено " + jsonString);
 
             // Уведомляем остальных пользователей в комнате о новом присоединившемся
             for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
@@ -107,6 +105,7 @@ public class MessageHandler {
     public static void sendHistory(String room, String username, WebSocket conn, DataBaseManager storage) {
       //  System.out.println("Отправляю историю для пользователя " + username + " в комнате " + room);
         // Получаем историю сообщений для этой комнаты
+        // отдать последние N строк
         String history = storage.getHistory(room);
         // Создаем JSON для истории
         String jsonHistory = buildJsonString("HISTORY", history, username, room);

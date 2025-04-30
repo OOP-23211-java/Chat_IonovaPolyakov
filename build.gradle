@@ -12,6 +12,7 @@ repositories {
 
 dependencies {
     implementation 'org.slf4j:slf4j-simple:2.0.13'
+    implementation 'org.xerial:sqlite-jdbc:3.45.1.0'
     // библиотека для WebSocket сервера
     implementation 'org.java-websocket:Java-WebSocket:1.5.3'
 

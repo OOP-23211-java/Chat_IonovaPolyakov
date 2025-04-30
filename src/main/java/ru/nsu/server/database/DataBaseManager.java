@@ -7,63 +7,65 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class DataBaseManager {
+
     private static final int MAX_MESSAGES = 4;
-    private final Map<String, Set<String>> rooms = new ConcurrentHashMap<>();
-    private final Map<String, Deque<String>> messages = new ConcurrentHashMap<>();
 
-    private final ObjectMapper objectMapper = new ObjectMapper(); // Jackson ObjectMapper для парсинга и сериализации
+    private final Map<String, Set<String>> rooms     = new ConcurrentHashMap<>();
+    private final Map<String, Deque<String>> history = new ConcurrentHashMap<>();
 
-    public synchronized boolean joinRoom(String room, String username) {
+    private final DataBase db;
+    private final ObjectMapper mapper = new ObjectMapper();
 
+    public DataBaseManager(DataBase db) {
+        this.db = db;
+    }
+
+    public synchronized boolean joinRoom(String room, String user) {
         rooms.putIfAbsent(room, new HashSet<>());
-        Set<String> users = rooms.get(room);
-        if (users.contains(username)) {
-            return false;
-        }
-        users.add(username);
-        return true;
+        return rooms.get(room).add(user);
     }
 
-    // сюда приходит сериализованный JSON
-    public synchronized void addMessage(String room, String serializedJsonMessage) {
-        messages.putIfAbsent(room, new LinkedList<>());
-        Deque<String> history = messages.get(room);
+    public synchronized boolean isInRoom(String room, String user) {
+        return rooms.containsKey(room) && rooms.get(room).contains(user);
+    }
 
+    public synchronized void leaveRoom(String room, String user) {
+        if (rooms.containsKey(room)) rooms.get(room).remove(user);
+    }
+
+    public synchronized void addMessage(String room, String jsonMessage) {
         try {
-            JsonNode node = objectMapper.readTree(serializedJsonMessage);
-            //String type = node.get("type").asText();
-            String username = node.get("username").asText();
-            String message = node.get("content").asText();
-            if(message.isEmpty()){
-                message = " ";
-            }
+            JsonNode node     = mapper.readTree(jsonMessage);
+            String user       = node.get("username").asText();
+            String text       = node.get("content").asText("");
+            if (text.isEmpty()) text = " ";
 
-            String formatted = username + ":" + message;
+            // 1) сохраняем в SQLite
+            db.insertMessage(user, room, text);
 
-            if (history.size() >= MAX_MESSAGES) {
-                history.pollFirst();
-            }
-            history.addLast(formatted);
+            // 2) обновляем in-memory кэш
+            history.putIfAbsent(room, new ArrayDeque<>());
+            Deque<String> deque = history.get(room);
+            if (deque.size() >= MAX_MESSAGES) deque.pollFirst();
+            deque.addLast(user + ':' + text);
+
         } catch (Exception e) {
-            System.out.println("Ошибка при добавлении сообщения: " + e.getMessage());
+            System.err.println("addMessage: " + e.getMessage());
         }
     }
 
-
-    // возвращает один JSON, в котором content — строка с сообщениями, разделёнными \n
     public synchronized String getHistory(String room) {
-        Deque<String> history = messages.getOrDefault(room, new LinkedList<>());
-        return String.join("\n", history);  // Соединяем сообщения с разделителем \n
+        this.warmUp(room);
+        Deque<String> deque = history.getOrDefault(room, new ArrayDeque<>());
+        return String.join("\n", deque);
     }
 
-    public synchronized boolean isInRoom(String room, String username) {
-        return rooms.containsKey(room) && rooms.get(room).contains(username);
-    }
-
-    public synchronized void leaveRoom(String room, String username) {
-        if (rooms.containsKey(room)) {
-            rooms.get(room).remove(username);
+    public synchronized void warmUp(String room) {
+        try {
+            List<String> last = db.loadLast(room, MAX_MESSAGES);
+            history.put(room, new ArrayDeque<>(last));
+        } catch (Exception e) {
+            System.err.println("warmUp: " + e.getMessage());
         }
     }
-
 }
