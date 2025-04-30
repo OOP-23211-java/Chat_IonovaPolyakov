@@ -17,7 +17,7 @@ import java.util.Scanner;
 public class Server extends WebSocketServer {
 
     private final Map<WebSocket, String> userSessions = new ConcurrentHashMap<>();
-    private final MessageWorkerPool workerPool = new MessageWorkerPool(4); // 4 воркера
+    private final MessageWorkerPool workerPool = new MessageWorkerPool(4);
     private final DataBaseManager storage = new DataBaseManager();
     private final ObjectMapper mapper = new ObjectMapper(); // для работы с JSON
 
@@ -48,6 +48,15 @@ public class Server extends WebSocketServer {
         if (conn != null && conn.isOpen()) {
             conn.close(1000);
         }
+        workerPool.submit(() -> {
+            try {
+                String[] parts = userSessions.get(conn).split("@");
+                MessageHandler.handleDisconnect(userSessions, storage, userSessions.get(conn), parts[1]);
+                userSessions.remove(conn);
+            } catch (Exception e) {
+                System.err.println("Ошибка при обработке отключения:" + e.getMessage());
+            }
+        });
     }
 
     @Override
@@ -82,7 +91,6 @@ public class Server extends WebSocketServer {
     }
 
     public void stopServer() {
-        // Завершаем выполнение пула
         workerPool.shutdown();
         for (WebSocket conn : userSessions.keySet()) {
             try {
@@ -120,9 +128,7 @@ public class Server extends WebSocketServer {
         int port = 8888; // Указываем порт для сервера
         Server server = new Server(port);
 
-        // Запускаем сервер
-        server.start(); // Запуск сервера без потока
-        System.out.println("Hello from main after start!");
+        server.start();
         // Ожидаем команду от пользователя для завершения работы сервера
         server.listenForExitCommand();
     }

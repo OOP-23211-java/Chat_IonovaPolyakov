@@ -17,31 +17,15 @@ public class MessageHandler {
                                      DataBaseManager storage) {
         try {
             JsonNode json = mapper.readTree(message);
-            //System.out.println("Обработал json");
             String type = json.get("type").asText();
             String room = json.get("room").asText();
             String username = json.get("username").asText();
+            String content = json.get("content").asText();
             String jsonString;
 
             switch (type) {
                 case "JOIN":
-                    boolean joined = true; // заглушка
-                    if (joined) {
-                        usernames.put(conn, username + "@" + room);
-                        for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
-                            if (entry.getValue().endsWith("@" + room)) {
-                                jsonString = buildJsonString("USER_JOINED", "", username, room);
-                                if (jsonString != null) {
-                                    entry.getKey().send(jsonString);
-                                }
-                            }
-                        }
-                    } else {
-                        jsonString = buildJsonString("ERROR", "Username already taken in this room " + room, username, room);
-                        if (jsonString != null) {
-                            conn.send(jsonString);
-                        }
-                    }
+                    handleJoin(conn, username, room, usernames, storage);
                     break;
 
                 case "MESSAGE":
@@ -53,14 +37,15 @@ public class MessageHandler {
                         return;
                     }
 
-                    String msgText = json.get("MESSAGE").asText();
-                    //storage.addMessage(room, username, msgText);
-
                     for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
-                        if (entry.getValue().endsWith("@" + room)) {
-                            jsonString = buildJsonString("MESSAGE", msgText, username, room);
-                            if (jsonString != null && entry.getValue()!= (username + "@" + room )) {
+                        String[] parts = entry.getValue().split("@");
+                        if (parts[1].equals(room)) {
+                            jsonString = buildJsonString("MESSAGE", content, username, room);
+                            if (jsonString != null && username.equals(parts[0])) {
                                 entry.getKey().send(jsonString);
+                                if(parts[0].equals(username)){
+                                    storage.addMessage(room, jsonString);
+                                }
                             }
                         }
                     }
@@ -85,12 +70,60 @@ public class MessageHandler {
             }
         }
     }
+   // Новый метод для обработки присоединения пользователя
+    private static void handleJoin(WebSocket conn, String username, String room,
+                                   Map<WebSocket, String> usernames, DataBaseManager storage) {
+        String jsonString;
 
+        // Попытка присоединиться к комнате
+        boolean joined = storage.joinRoom(room, username);
+        if (joined) {
+            usernames.put(conn, username + "@" + room);
+
+            // Отправляем историю сообщений
+            sendHistory(room, username, conn, storage);
+
+            jsonString = buildJsonString("USER_JOINED", "", username, room);
+            storage.addMessage(room, jsonString);
+            System.out.println("Сообщение добавлено " + jsonString);
+
+            // Уведомляем остальных пользователей в комнате о новом присоединившемся
+            for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
+                String[] parts = entry.getValue().split("@");
+                if (parts[1].equals(room)) {
+                    jsonString = buildJsonString("USER_JOINED", "",username, room);
+                    if (jsonString != null) {
+                        entry.getKey().send(jsonString);
+                    }
+                }
+            }
+        } else {
+            // Если имя пользователя уже занято в комнате
+            jsonString = buildJsonString("ERROR", "Username already taken in this room " + room, username, room);
+            if (jsonString != null) {
+                conn.send(jsonString);
+            }
+        }
+    }
+
+    // Метод для отправки истории сообщений
+    public static void sendHistory(String room, String username, WebSocket conn, DataBaseManager storage) {
+        System.out.println("Отправляю историю для пользователя " + username + " в комнате " + room);
+        // Получаем историю сообщений для этой комнаты
+        String history = storage.getHistory(room);
+        // Создаем JSON для истории
+        String jsonHistory = buildJsonString("HISTORY", history, username, room);
+        if (jsonHistory != null) {
+            conn.send(jsonHistory); // Отправляем историю клиенту
+        }
+    }
+
+    // Метод для построения строки JSON
     private static String buildJsonString(String type, String message, String username, String room) {
         try {
             ObjectNode node = mapper.createObjectNode();
             node.put("type", type);
-            node.put("message", message);
+            node.put("content", message);
             node.put("username", username);
             node.put("room", room);
             return mapper.writeValueAsString(node);
@@ -99,4 +132,18 @@ public class MessageHandler {
             return null;
         }
     }
-}
+    public static void handleDisconnect(Map<WebSocket, String> usernames, DataBaseManager storage, String username, String room) {
+        String jsonString = buildJsonString("USER_LEFT", "", username, room);
+        storage.addMessage(room, jsonString);
+
+        for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
+            if (entry.getValue().endsWith("@" + room)) {
+                jsonString = buildJsonString("USER_LEFT", "", entry.getValue(), room);
+                if (jsonString != null) {
+                    entry.getKey().send(jsonString);
+                }
+            }
+        }
+        }
+    }
+
