@@ -1,0 +1,1 @@
+tagSearchIndex = [{"l":"LoggerConfig","h":"class ru.nsu.client.LoggerConfig","d":"Section","u":"ru/nsu/client/LoggerConfig.html#loggerconfig-heading"}];updateSearchResults();

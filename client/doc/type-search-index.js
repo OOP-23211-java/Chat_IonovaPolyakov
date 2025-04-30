@@ -1,0 +1,1 @@
+typeSearchIndex = [{"l":"All Classes and Interfaces","u":"allclasses-index.html"},{"p":"ru.nsu.client","l":"ChatClient"},{"p":"ru.nsu.client","l":"ChatMessage"},{"p":"ru.nsu.client","l":"LoggerConfig"},{"p":"ru.nsu.client","l":"Main"}];updateSearchResults();
