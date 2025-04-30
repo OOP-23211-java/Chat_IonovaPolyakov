@@ -14,6 +14,7 @@ public class DataBaseManager {
     private final ObjectMapper objectMapper = new ObjectMapper(); // Jackson ObjectMapper для парсинга и сериализации
 
     public synchronized boolean joinRoom(String room, String username) {
+
         rooms.putIfAbsent(room, new HashSet<>());
         Set<String> users = rooms.get(room);
         if (users.contains(username)) {
@@ -30,14 +31,14 @@ public class DataBaseManager {
 
         try {
             JsonNode node = objectMapper.readTree(serializedJsonMessage);
-            String type = node.get("type").asText();
+            //String type = node.get("type").asText();
             String username = node.get("username").asText();
             String message = node.get("content").asText();
             if(message.isEmpty()){
                 message = " ";
             }
 
-            String formatted = type + ":" + username + ":" + message;
+            String formatted = username + ":" + message;
 
             if (history.size() >= MAX_MESSAGES) {
                 history.pollFirst();
@@ -65,30 +66,4 @@ public class DataBaseManager {
         }
     }
 
-    public synchronized String debugInfo() {
-        StringBuilder debugOutput = new StringBuilder();
-
-        debugOutput.append("=== Debug Info ===\n");
-
-        debugOutput.append("\n--- Rooms ---\n");
-        if (rooms.isEmpty()) {
-            debugOutput.append("No rooms available.\n");
-        } else {
-            for (Map.Entry<String, Set<String>> entry : rooms.entrySet()) {
-                debugOutput.append(String.format("Room: %-20s | Users: %s\n", entry.getKey(), entry.getValue()));
-            }
-        }
-
-        debugOutput.append("\n--- Messages ---\n");
-        if (messages.isEmpty()) {
-            debugOutput.append("No messages available.\n");
-        } else {
-            for (Map.Entry<String, Deque<String>> entry : messages.entrySet()) {
-                debugOutput.append(String.format("Room: %-20s | Messages: %s\n", entry.getKey(), entry.getValue()));
-            }
-        }
-
-        debugOutput.append("\n===================\n");
-        return debugOutput.toString();
-    }
 }

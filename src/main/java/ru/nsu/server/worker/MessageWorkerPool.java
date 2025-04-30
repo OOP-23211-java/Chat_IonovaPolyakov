@@ -17,7 +17,8 @@ public class MessageWorkerPool {
         this.workers = new Thread[size];
 
         for (int i = 0; i < size; i++) {
-            workers[i] = new Thread(new Worker());
+            workers[i] = new Thread(new Worker(), "Worker-" + i);
+            workers[i].setDaemon(true); // это позволяет JVM завершиться, если все, кроме этих потоков, завершились
             workers[i].start();
         }
     }
@@ -26,23 +27,24 @@ public class MessageWorkerPool {
         if (isShutdown) {
             throw new IllegalStateException("Пул остановлен, нельзя добавить задачу");
         }
-        if(!taskQueue.offer(task)){
-            System.out.println("MessageWorkerPool.submit:Ошибка при записи в очередь задач");
+        if (!taskQueue.offer(task)) {
+            System.out.println("MessageWorkerPool.submit: Ошибка при записи в очередь задач");
         }
     }
 
     public void shutdown() {
         isShutdown = true;
         for (Thread worker : workers) {
-            worker.interrupt(); // прерываем потоки, если они ждут задачи
+            worker.interrupt(); // прерываем потоки
         }
+        System.out.println("Воркеры остановлены");
     }
 
     private class Worker implements Runnable {
         public void run() {
             try {
                 while (!isShutdown || !taskQueue.isEmpty()) {
-                    Runnable task = taskQueue.take(); // блокируется, пока не появится задача
+                    Runnable task = taskQueue.take();
                     try {
                         task.run();
                     } catch (Exception e) {

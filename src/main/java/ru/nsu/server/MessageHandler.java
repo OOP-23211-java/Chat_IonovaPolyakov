@@ -16,6 +16,10 @@ public class MessageHandler {
                                      Map<WebSocket, String> usernames,
                                      DataBaseManager storage) {
         try {
+            if (Thread.currentThread().isInterrupted()) {
+                System.out.println("Задача прервана до обработки");
+                return;
+            }
             JsonNode json = mapper.readTree(message);
             String type = json.get("type").asText();
             String room = json.get("room").asText();
@@ -41,11 +45,11 @@ public class MessageHandler {
                         String[] parts = entry.getValue().split("@");
                         if (parts[1].equals(room)) {
                             jsonString = buildJsonString("MESSAGE", content, username, room);
-                            if (jsonString != null && username.equals(parts[0])) {
+                            if (jsonString != null && !username.equals(parts[0])) {
                                 entry.getKey().send(jsonString);
-                                if(parts[0].equals(username)){
-                                    storage.addMessage(room, jsonString);
-                                }
+                            }
+                            if(parts[0].equals(username)){
+                                storage.addMessage(room, jsonString);
                             }
                         }
                     }
@@ -63,11 +67,6 @@ public class MessageHandler {
             if (errorJson != null) {
                 conn.send(errorJson);
             }
-
-            errorJson = buildJsonString("ERROR", "Invalid format message", "", "");
-            if (errorJson != null) {
-                conn.send(errorJson);
-            }
         }
     }
    // Новый метод для обработки присоединения пользователя
@@ -80,12 +79,10 @@ public class MessageHandler {
         if (joined) {
             usernames.put(conn, username + "@" + room);
 
-            // Отправляем историю сообщений
-            sendHistory(room, username, conn, storage);
-
             jsonString = buildJsonString("USER_JOINED", "", username, room);
-            storage.addMessage(room, jsonString);
-            System.out.println("Сообщение добавлено " + jsonString);
+            sendHistory(room, username, conn, storage);
+            //storage.addMessage(room, jsonString);
+            //System.out.println("Сообщение добавлено " + jsonString);
 
             // Уведомляем остальных пользователей в комнате о новом присоединившемся
             for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
@@ -108,11 +105,12 @@ public class MessageHandler {
 
     // Метод для отправки истории сообщений
     public static void sendHistory(String room, String username, WebSocket conn, DataBaseManager storage) {
-        System.out.println("Отправляю историю для пользователя " + username + " в комнате " + room);
+      //  System.out.println("Отправляю историю для пользователя " + username + " в комнате " + room);
         // Получаем историю сообщений для этой комнаты
         String history = storage.getHistory(room);
         // Создаем JSON для истории
         String jsonHistory = buildJsonString("HISTORY", history, username, room);
+        System.out.println(jsonHistory);
         if (jsonHistory != null) {
             conn.send(jsonHistory); // Отправляем историю клиенту
         }
@@ -132,18 +130,6 @@ public class MessageHandler {
             return null;
         }
     }
-    public static void handleDisconnect(Map<WebSocket, String> usernames, DataBaseManager storage, String username, String room) {
-        String jsonString = buildJsonString("USER_LEFT", "", username, room);
-        storage.addMessage(room, jsonString);
 
-        for (Map.Entry<WebSocket, String> entry : usernames.entrySet()) {
-            if (entry.getValue().endsWith("@" + room)) {
-                jsonString = buildJsonString("USER_LEFT", "", entry.getValue(), room);
-                if (jsonString != null) {
-                    entry.getKey().send(jsonString);
-                }
-            }
-        }
-        }
     }
 

@@ -1,6 +1,5 @@
 package ru.nsu.server;
 
-//import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.java_websocket.WebSocket;
@@ -11,15 +10,18 @@ import ru.nsu.server.database.DataBaseManager;
 
 import java.net.InetSocketAddress;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Scanner;
+import java.util.concurrent.*;
+
+import static java.lang.Thread.sleep;
 
 public class Server extends WebSocketServer {
 
     private final Map<WebSocket, String> userSessions = new ConcurrentHashMap<>();
     private final MessageWorkerPool workerPool = new MessageWorkerPool(4);
     private final DataBaseManager storage = new DataBaseManager();
-    private final ObjectMapper mapper = new ObjectMapper(); // для работы с JSON
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final BlockingQueue<Boolean> exitQueue = new LinkedBlockingQueue<>();  // Очередь для сигналов
 
     public Server(int port) {
         super(new InetSocketAddress(port));
@@ -37,36 +39,29 @@ public class Server extends WebSocketServer {
         try {
             mapper.writeValueAsString(node);
         } catch (Exception e) {
-            System.out.println("Ошибка при сериализации json "+ e.getMessage());
+            System.out.println("Ошибка при сериализации json " + e.getMessage());
         }
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        System.out.println("Closed connection: " + reason);
+        String[] parts = userSessions.getOrDefault(conn, "@").split("@");
+        storage.leaveRoom(parts[1], parts[0]);
         userSessions.remove(conn);
         if (conn != null && conn.isOpen()) {
             conn.close(1000);
         }
-        workerPool.submit(() -> {
-            try {
-                String[] parts = userSessions.get(conn).split("@");
-                MessageHandler.handleDisconnect(userSessions, storage, userSessions.get(conn), parts[1]);
-                userSessions.remove(conn);
-            } catch (Exception e) {
-                System.err.println("Ошибка при обработке отключения:" + e.getMessage());
-            }
-        });
+        System.out.println("Пользователь " + parts[0] + " из комнаты " + parts[1] + " отключился");
     }
 
     @Override
     public void onMessage(WebSocket conn, String message) {
-        System.out.println("Сообщение:" + message);
+        System.out.println("Сообщение: " + message);
         workerPool.submit(() -> {
             try {
                 MessageHandler.handleMessage(conn, message, userSessions, storage);
             } catch (Exception e) {
-                System.err.println("Ошибка при обработке сообщения:" + message);
+                System.err.println("Ошибка при обработке сообщения: " + e.getMessage());
             }
         });
     }
@@ -79,10 +74,10 @@ public class Server extends WebSocketServer {
             System.err.println("Неизвестная ошибка");
         }
 
-        // Если соединение открыто, закрываем его
         if (conn != null && conn.isOpen()) {
             conn.close(1011, ex != null ? ex.getMessage() : "Неизвестная ошибка");
         }
+        userSessions.remove(conn);
     }
 
     @Override
@@ -91,6 +86,7 @@ public class Server extends WebSocketServer {
     }
 
     public void stopServer() {
+        System.out.println("Остановка сервера...");
         workerPool.shutdown();
         for (WebSocket conn : userSessions.keySet()) {
             try {
@@ -109,27 +105,40 @@ public class Server extends WebSocketServer {
             System.err.println("Ошибка при остановке сервера: " + e.getMessage());
             Thread.currentThread().interrupt();
         }
-
     }
 
     public void listenForExitCommand() {
         try (Scanner scanner = new Scanner(System.in)) {
-            while (scanner.hasNextLine()) {
-                String input = scanner.nextLine();
-                if ("exit".equalsIgnoreCase(input)) {
-                    stopServer();
-                    break;
+            while (true) {
+                if (scanner.hasNextLine()) { // Проверяем, есть ли новая строка для считывания
+                    String input = scanner.nextLine();
+                    sleep(10);
+                    if ("exit".equalsIgnoreCase(input)) {
+                        stopServer();
+                        break;
+                    }
                 }
             }
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
         }
+        System.out.println(">>> Сервер завершил работу. Выход из listenForExitCommand.");
     }
 
     public static void main(String[] args) {
-        int port = 8888; // Указываем порт для сервера
+        int port = 8889;
         Server server = new Server(port);
-
         server.start();
-        // Ожидаем команду от пользователя для завершения работы сервера
-        server.listenForExitCommand();
+
+        // Слушаем команду выхода в отдельном потоке
+        new Thread(server::listenForExitCommand).start();
+
+        try {
+            // Ожидаем сигнала от потока для завершения работы
+            server.exitQueue.take();
+            server.stopServer();
+        } catch (InterruptedException e) {
+            System.err.println("Ошибка при ожидании сигнала на выход: " + e.getMessage());
+        }
     }
 }
