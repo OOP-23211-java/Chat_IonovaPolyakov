@@ -1,0 +1,158 @@
+package ru.nsu.server;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
+import ru.nsu.server.database.DataBase;
+import ru.nsu.server.worker.MessageWorkerPool;
+import ru.nsu.server.database.DataBaseManager;
+
+import java.net.InetSocketAddress;
+import java.sql.SQLException;
+import java.util.Map;
+import java.util.Scanner;
+import java.util.concurrent.*;
+
+
+public class Server extends WebSocketServer {
+
+    private final Map<WebSocket, String> userSessions = new ConcurrentHashMap<>();
+    private final MessageWorkerPool workerPool = new MessageWorkerPool(4);
+    private final DataBase db;
+    private final DataBaseManager storage;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final BlockingQueue<Boolean> exitQueue = new LinkedBlockingQueue<>();  // Очередь для сигналов
+
+    public Server(int port) {
+        super(new InetSocketAddress(port));
+        db = new DataBase("chat.db");
+        try {
+            db.connect();
+        } catch (SQLException e) {
+            System.err.println("Ошибка при сздании базы данных " + e.getMessage());
+            try{
+                this.stop();
+            } catch (InterruptedException ex) {
+                throw new RuntimeException(ex);
+            }
+        }
+    storage = new DataBaseManager(db);
+    }
+
+    @Override
+    public void onOpen(WebSocket conn, ClientHandshake handshake) {
+        System.out.println("New connection from " + conn.getRemoteSocketAddress());
+        ObjectNode node = mapper.createObjectNode();
+        node.put("type", "INIT");
+        node.put("message", "");
+        node.put("username", "");
+        node.put("room", "");
+
+        try {
+            mapper.writeValueAsString(node);
+        } catch (Exception e) {
+            System.out.println("Ошибка при сериализации json " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        String[] parts = userSessions.getOrDefault(conn, "@").split("@");
+        storage.leaveRoom(parts[1], parts[0]);
+        userSessions.remove(conn);
+        if (conn != null && conn.isOpen()) {
+            conn.close(1000);
+        }
+        System.out.println("Пользователь " + parts[0] + " из комнаты " + parts[1] + " отключился");
+    }
+
+    @Override
+    public void onMessage(WebSocket conn, String message) {
+        System.out.println("Сообщение: " + message);
+        workerPool.submit(() -> {
+            try {
+                MessageHandler.handleMessage(conn, message, userSessions, storage);
+            } catch (Exception e) {
+                System.err.println("Ошибка при обработке сообщения: " + e.getMessage());
+            }
+        });
+    }
+
+    @Override
+    public void onError(WebSocket conn, Exception ex) {
+        if (ex != null) {
+            System.err.println("Ошибка: " + ex.getMessage());
+        } else {
+            System.err.println("Неизвестная ошибка");
+        }
+
+        if (conn != null && conn.isOpen()) {
+            conn.close(1011, ex != null ? ex.getMessage() : "Неизвестная ошибка");
+        }
+        userSessions.remove(conn);
+    }
+
+    @Override
+    public void onStart() {
+        System.out.println("Сервер начал свою работу!");
+    }
+
+    public void stopServer() {
+        System.out.println("Остановка сервера...");
+        workerPool.shutdown();
+        db.close();
+        for (WebSocket conn : userSessions.keySet()) {
+            try {
+                if (conn != null && conn.isOpen()) {
+                    conn.close(1000);
+                    System.out.println("Соединение с клиентом закрыто");
+                }
+            } catch (Exception e) {
+                System.err.println("Ошибка при закрытии соединения: " + e.getMessage());
+            }
+        }
+        try {
+            this.stop();
+            System.out.println("Сервер остановлен!");
+        } catch (InterruptedException e) {
+            System.err.println("Ошибка при остановке сервера: " + e.getMessage());
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public void listenForExitCommand() {
+        try (Scanner scanner = new Scanner(System.in)) {
+            while (true) {
+                if (scanner.hasNextLine()) { // Проверяем, есть ли новая строка для считывания
+                    String input = scanner.nextLine();
+                    if ("exit".equalsIgnoreCase(input)) {
+                        stopServer();
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
+        }
+        System.out.println(">>> Сервер завершил работу. Выход из listenForExitCommand.");
+    }
+
+    public static void main(String[] args) {
+        int port = 8889;
+        Server server = new Server(port);
+        server.start();
+
+        // Слушаем команду выхода в отдельном потоке
+        new Thread(server::listenForExitCommand).start();
+
+        try {
+            // Ожидаем сигнала от потока для завершения работы
+            server.exitQueue.take();
+            server.stopServer();
+        } catch (InterruptedException e) {
+            System.err.println("Ошибка при ожидании сигнала на выход: " + e.getMessage());
+        }
+    }
+}
